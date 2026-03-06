@@ -54,6 +54,12 @@ static void  gnss_event_handler(int evt)
         first_fix = true;
       }
     }
+
+    if (pvt_data.flags & NRF_MODEM_GNSS_PVT_FLAG_DEADLINE_MISSED) {
+      LOG_INF("GNSS Blocked by LTE activity");
+    } else if (pvt_data.flags & NRF_MODEM_GNSS_PVT_FLAG_NOT_ENOUGH_WINDOW_TIME) {
+      LOG_INF("Insufficient GNSS time window");
+    }
     break;
 
   case NRF_MODEM_GNSS_EVT_PERIODIC_WAKEUP:

@@ -8,6 +8,8 @@
 
 LOG_MODULE_REGISTER(nrf91_gnss);
 
+static K_SEM_DEFINE(lte_connected, 0, 1);
+
 static struct nrf_modem_gnss_pvt_data_frame pvt_data;
 
 static int64_t gnss_start_time;
@@ -67,6 +69,30 @@ static void  gnss_event_handler(int evt)
   }
 }
 
+static void lte_handler(const struct lte_lc_evt *const evt)
+{
+  switch (evt->type) {
+  case LTE_LC_EVT_NW_REG_STATUS:
+    if (evt->nw_reg_status != LTE_LC_NW_REG_REGISTERED_HOME &&
+        evt->nw_reg_status != LTE_LC_NW_REG_REGISTERED_ROAMING) {
+      break;
+    }
+    LOG_INF("LTE registered: %s",
+            evt->nw_reg_status == LTE_LC_NW_REG_REGISTERED_HOME ? "home network"
+                                                                : "roaming");
+    k_sem_give(&lte_connected);
+    break;
+
+  case LTE_LC_EVT_RRC_UPDATE:
+    LOG_INF("RRC mode: %s",
+            evt->rrc_mode == LTE_LC_RRC_MODE_CONNECTED ? "connected" : "idle");
+    break;
+
+  default:
+    break;
+  }
+}
+
 static int modem_configure(void)
 {
   int err;
@@ -78,6 +104,15 @@ static int modem_configure(void)
     return err;
   }
 
+	LOG_INF("Connecting to LTE network");
+	err = lte_lc_connect_async(lte_handler);
+	if (err) {
+		LOG_ERR("lte_lc_connect_async failed: %d", err);
+		return err;
+	}
+
+	k_sem_take(&lte_connected, K_FOREVER);
+	LOG_INF("Connected to LTE network");
   return 0;
 }
 
@@ -85,8 +120,8 @@ static int gnss_init_and_start(void)
 {
   int err;
 
-  /* Activate only the gnss modem */
-  err = lte_lc_func_mode_set(LTE_LC_FUNC_MODE_ACTIVATE_GNSS);
+  /* Activate gnss + lte */
+  err = lte_lc_func_mode_set(LTE_LC_FUNC_MODE_NORMAL);
   if (err) {
     LOG_ERR("Failed to activate GNSS functional mode, error: %d", err);
     return err;

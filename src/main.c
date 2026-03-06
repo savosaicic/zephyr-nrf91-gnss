@@ -94,6 +94,19 @@ static void lte_handler(const struct lte_lc_evt *const evt)
             evt->rrc_mode == LTE_LC_RRC_MODE_CONNECTED ? "connected" : "idle");
     break;
 
+  case LTE_LC_EVT_PSM_UPDATE:
+    LOG_INF("PSM parameter update: TAU: %d s, Active time: %d s",
+            evt->psm_cfg.tau, evt->psm_cfg.active_time);
+    if (evt->psm_cfg.active_time == -1) {
+      LOG_ERR("Network rejected PSM parameters. Failed to enable PSM");
+    }
+    break;
+
+  case LTE_LC_EVT_EDRX_UPDATE:
+    LOG_INF("eDRX parameter update: eDRX: %.2f s, PTW: %.2f s",
+            (double)evt->edrx_cfg.edrx, (double)evt->edrx_cfg.ptw);
+    break;
+
   default:
     break;
   }
@@ -108,6 +121,19 @@ static int modem_configure(void)
   if (err) {
     LOG_ERR("Failed to initialize the modem library, error: %d", err);
     return err;
+  }
+
+  /* Request eDRX and PSM from the network
+   * This can also be done automatically using
+   * Kconfig (CONFIG_LTE_PSM_REQ / CONFIG_LTE_EDRX_REQ)
+   */
+  err = lte_lc_psm_req(true);
+  if (err) {
+    LOG_ERR("lte_lc_psm_req, error: %d", err);
+  }
+  err = lte_lc_edrx_req(true);
+  if (err) {
+    LOG_ERR("lte_lc_edrx_req, error: %d", err);
   }
 
 	LOG_INF("Connecting to LTE network");

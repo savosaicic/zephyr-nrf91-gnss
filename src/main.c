@@ -283,9 +283,36 @@ static int agnss_request_and_inject(void)
   return 0;
 }
 
+static int gnss_delete_data(void)
+{
+  int err;
+
+  uint32_t delete_mask =
+    NRF_MODEM_GNSS_DELETE_EPHEMERIDES | NRF_MODEM_GNSS_DELETE_ALMANACS |
+    NRF_MODEM_GNSS_DELETE_IONO_CORRECTION_DATA |
+    NRF_MODEM_GNSS_DELETE_LAST_GOOD_FIX | NRF_MODEM_GNSS_DELETE_GPS_TOW |
+    NRF_MODEM_GNSS_DELETE_GPS_WEEK | NRF_MODEM_GNSS_DELETE_UTC_DATA |
+    NRF_MODEM_GNSS_DELETE_GPS_TOW_PRECISION | NRF_MODEM_GNSS_DELETE_EKF;
+
+  err = nrf_modem_gnss_nv_data_delete(delete_mask);
+  if (err) {
+    LOG_ERR("Failed to delete GNSS data: %d", err);
+    return err;
+  }
+  LOG_INF("GNSS cold start: all stored data deleted");
+  return err;
+}
+
 static int gnss_init_and_start(void)
 {
   int err;
+
+  if (IS_ENABLED(CONFIG_GNSS_COLD_START)) {
+    err = gnss_delete_data();
+    if (err) {
+      return err;
+    }
+  }
 
   /* Activate gnss + lte */
   err = lte_lc_func_mode_set(LTE_LC_FUNC_MODE_NORMAL);

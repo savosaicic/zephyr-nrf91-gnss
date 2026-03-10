@@ -1,5 +1,12 @@
 menu "nrf91_gnss"
 
+config GNSS_COLD_START
+	bool "Force GNSS cold start by deleting all stored data"
+	default n
+	help
+	  Deletes all stored GNSS data (ephemerides, almanacs, last good fix,
+	  etc.) before starting. Useful for TTFF benchmarking.
+
 config GNSS_SINGLE_FIX
 	bool "Enable single fix navigation mode"
 	default n

@@ -4,11 +4,13 @@
 #include <zephyr/logging/log.h>
 #include <modem/lte_lc.h>
 #include <nrf_modem_at.h>
+#include <date_time.h>
 #include <stdint.h>
 
 LOG_MODULE_REGISTER(nrf91_gnss);
 
 static K_SEM_DEFINE(lte_connected, 0, 1);
+static K_SEM_DEFINE(time_synced, 0, 1);
 
 static struct nrf_modem_gnss_pvt_data_frame pvt_data;
 
@@ -112,6 +114,16 @@ static void lte_handler(const struct lte_lc_evt *const evt)
   }
 }
 
+static void date_time_event_handler(const struct date_time_evt *evt)
+{
+  if (evt->type == DATE_TIME_OBTAINED_MODEM ||
+      evt->type == DATE_TIME_OBTAINED_NTP ||
+      evt->type == DATE_TIME_OBTAINED_EXT) {
+    LOG_INF("Time synced (source: %d)", evt->type);
+    k_sem_give(&time_synced);
+  }
+}
+
 static int modem_configure(void)
 {
   int err;
@@ -122,6 +134,8 @@ static int modem_configure(void)
     LOG_ERR("Failed to initialize the modem library, error: %d", err);
     return err;
   }
+
+  date_time_register_handler(date_time_event_handler);
 
   /* Request eDRX and PSM from the network
    * This can also be done automatically using
@@ -145,6 +159,13 @@ static int modem_configure(void)
 
 	k_sem_take(&lte_connected, K_FOREVER);
 	LOG_INF("Connected to LTE network");
+
+  LOG_INF("Waiting for time sync...");
+  err = k_sem_take(&time_synced, K_SECONDS(30));
+  if (err) {
+    LOG_ERR("Timed out waiting for time sync");
+    return -ETIMEDOUT;
+  }
   return 0;
 }
 

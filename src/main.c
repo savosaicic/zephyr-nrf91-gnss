@@ -196,11 +196,6 @@ static int agnss_request_and_inject(void)
 
   err = k_sem_take(&agnss_req_ready, K_SECONDS(10));
 
-  if (!req.data_flags) {
-    LOG_INF("A-GNSS data still valid, skipping request");
-    return 0;
-  }
-
   if (err == 0) {
     LOG_INF("Using modem A-GNSS request: data_flags=0x%08X",
             gnss_agnss_req.data_flags);
@@ -212,6 +207,10 @@ static int agnss_request_and_inject(void)
     if (err) {
       LOG_ERR("Failed to get A-GNSS expiry: %d", err);
       return err;
+    }
+    if (!req.data_flags) {
+      LOG_INF("A-GNSS data still valid, skipping request");
+      return 0;
     }
     req.data_flags             = expiry.data_flags;
     req.system_count           = 2;

@@ -1,4 +1,6 @@
 #include <zephyr/kernel.h>
+#include <net/nrf_cloud_rest.h>
+#include <net/nrf_cloud_agnss.h>
 #include <modem/nrf_modem_lib.h>
 #include <nrf_modem_gnss.h>
 #include <zephyr/logging/log.h>
@@ -18,6 +20,10 @@ static struct nrf_modem_gnss_pvt_data_frame   pvt_data;
 
 static int64_t gnss_start_time;
 static bool    first_fix = false;
+
+static char jwt_buf[600];
+static char rx_buf[2048];
+static char agnss_data_buf[NRF_CLOUD_AGNSS_MAX_DATA_SIZE];
 
 static void print_fix_data(struct nrf_modem_gnss_pvt_data_frame *pvt)
 {
@@ -183,6 +189,101 @@ static int modem_configure(void)
   return 0;
 }
 
+static int agnss_request_and_inject(void)
+{
+  int                                    err;
+  struct nrf_modem_gnss_agnss_data_frame req = {0};
+
+  err = k_sem_take(&agnss_req_ready, K_SECONDS(10));
+
+  if (!req.data_flags) {
+    LOG_INF("A-GNSS data still valid, skipping request");
+    return 0;
+  }
+
+  if (err == 0) {
+    LOG_INF("Using modem A-GNSS request: data_flags=0x%08X",
+            gnss_agnss_req.data_flags);
+    memcpy(&req, &gnss_agnss_req, sizeof(req));
+  } else {
+    LOG_WRN("EVT_AGNSS_REQ not received, falling back to expiry flags");
+    struct nrf_modem_gnss_agnss_expiry expiry = {0};
+    err = nrf_modem_gnss_agnss_expiry_get(&expiry);
+    if (err) {
+      LOG_ERR("Failed to get A-GNSS expiry: %d", err);
+      return err;
+    }
+    req.data_flags             = expiry.data_flags;
+    req.system_count           = 2;
+    req.system[0].system_id    = NRF_MODEM_GNSS_SYSTEM_GPS;
+    req.system[0].sv_mask_ephe = 0xFFFFFFFF;
+    req.system[0].sv_mask_alm  = 0xFFFFFFFF;
+    req.system[1].system_id    = NRF_MODEM_GNSS_SYSTEM_QZSS;
+    req.system[1].sv_mask_ephe = 0x3FF;
+    req.system[1].sv_mask_alm  = 0x3FF;
+  }
+
+  /* Generate JWT for REST authentication */
+  err = nrf_cloud_jwt_generate(0, jwt_buf, sizeof(jwt_buf));
+  if (err) {
+    LOG_ERR("Failed to generate JWT: %d", err);
+    return err;
+  }
+
+  struct nrf_cloud_rest_context rest_ctx = {
+    .connect_socket = -1,
+    .keep_alive     = false,
+    .timeout_ms     = NRF_CLOUD_REST_TIMEOUT_NONE,
+    .auth           = jwt_buf,
+    .rx_buf         = rx_buf,
+    .rx_buf_len     = sizeof(rx_buf),
+    .fragment_size  = 0,
+  };
+
+  struct nrf_cloud_rest_agnss_request agnss_req = {
+    .type      = NRF_CLOUD_REST_AGNSS_REQ_CUSTOM,
+    .agnss_req = &req,
+    .net_info  = NULL,
+  };
+
+  struct nrf_cloud_rest_agnss_result agnss_result = {
+    .buf    = agnss_data_buf,
+    .buf_sz = sizeof(agnss_data_buf),
+  };
+
+  /* TODO: Attach cell info for better satellite filtering */
+
+  LOG_INF("Requesting A-GNSS data from nRF Cloud via REST...");
+  err = nrf_cloud_rest_agnss_data_get(&rest_ctx, &agnss_req, &agnss_result);
+  if (err) {
+    LOG_ERR("nrf_cloud_rest_agnss_data_get failed: %d (HTTP status: %d)", err,
+            rest_ctx.status);
+    return err;
+  }
+
+  LOG_INF("Received %zu bytes of A-GNSS data, injecting into modem...",
+          agnss_result.agnss_sz);
+
+  err = nrf_cloud_agnss_process(agnss_result.buf, agnss_result.agnss_sz);
+  if (err) {
+    LOG_ERR("nrf_cloud_agnss_process failed: %d", err);
+    return err;
+  }
+
+  /* Verify the modem accepted the data */
+  struct nrf_modem_gnss_agnss_expiry expiry_after = {0};
+  if (nrf_modem_gnss_agnss_expiry_get(&expiry_after) == 0) {
+    if (expiry_after.data_flags == 0) {
+      LOG_INF("A-GNSS injection verified: modem has valid assistance data");
+    } else {
+      LOG_WRN("A-GNSS injection incomplete, modem still needs flags=0x%08X",
+              expiry_after.data_flags);
+    }
+  }
+
+  return 0;
+}
+
 static int gnss_init_and_start(void)
 {
   int err;
@@ -240,6 +341,11 @@ int main(void)
   if (err) {
 		LOG_ERR("Failed to initialize and start GNSS");
     return err;
+  }
+
+  err = agnss_request_and_inject();
+  if (err) {
+    LOG_WRN("A-GNSS fetch failed (%d), will continue without assistance", err);
   }
 
   while (1) {

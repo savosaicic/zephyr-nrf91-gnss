@@ -11,8 +11,10 @@ LOG_MODULE_REGISTER(nrf91_gnss);
 
 static K_SEM_DEFINE(lte_connected, 0, 1);
 static K_SEM_DEFINE(time_synced, 0, 1);
+static K_SEM_DEFINE(agnss_req_ready, 0, 1);
 
-static struct nrf_modem_gnss_pvt_data_frame pvt_data;
+static struct nrf_modem_gnss_agnss_data_frame gnss_agnss_req;
+static struct nrf_modem_gnss_pvt_data_frame   pvt_data;
 
 static int64_t gnss_start_time;
 static bool    first_fix = false;
@@ -31,6 +33,18 @@ static void  gnss_event_handler(int evt)
   int err;
 
   switch (evt) {
+  case NRF_MODEM_GNSS_EVT_AGNSS_REQ:
+    err = nrf_modem_gnss_read(&gnss_agnss_req, sizeof(gnss_agnss_req),
+                              NRF_MODEM_GNSS_DATA_AGNSS_REQ);
+    if (err) {
+      LOG_ERR("Failed to read A-GNSS request: %d", err);
+      break;
+    }
+    LOG_INF("A-GNSS request from modem: data_flags=0x%08X",
+            gnss_agnss_req.data_flags);
+    k_sem_give(&agnss_req_ready);
+    break;
+
   case NRF_MODEM_GNSS_EVT_PVT:
     err = nrf_modem_gnss_read(&pvt_data, sizeof(pvt_data),
                               NRF_MODEM_GNSS_DATA_PVT);

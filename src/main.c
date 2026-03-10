@@ -6,9 +6,22 @@
 #include <nrf_modem_at.h>
 #include <stdint.h>
 
+#include "fake_agps_data.h"
+
 LOG_MODULE_REGISTER(nrf91_gnss);
 
 static K_SEM_DEFINE(lte_connected, 0, 1);
+
+static struct k_work agnss_work;
+static struct nrf_modem_gnss_agnss_data_frame agnss_req;
+
+static void agnss_work_handler(struct k_work *work)
+{
+  int err = agps_fake_inject_all(&agnss_req);
+  if (err) {
+    LOG_ERR("A-GNSS injection failed: %d", err);
+  }
+}
 
 static struct nrf_modem_gnss_pvt_data_frame pvt_data;
 
@@ -61,6 +74,17 @@ static void  gnss_event_handler(int evt)
       LOG_INF("Insufficient GNSS time window");
     }
     break;
+
+  case NRF_MODEM_GNSS_EVT_AGNSS_REQ: {
+    err = nrf_modem_gnss_read(&agnss_req, sizeof(agnss_req), NRF_MODEM_GNSS_DATA_AGNSS_REQ);
+    if (err) {
+      LOG_ERR("Failed to read A-GNSS request: %d", err);
+      break;
+    }
+    LOG_INF("A-GNSS request from modem: data_flags=0x%08X", agnss_req.data_flags);
+    k_work_submit(&agnss_work);
+    break;
+  }
 
   case NRF_MODEM_GNSS_EVT_PERIODIC_WAKEUP:
     LOG_INF("GNSS has woken up");
@@ -177,6 +201,29 @@ static int gnss_init_and_start(void)
   if (err) {
     LOG_ERR("Failed to set GNSS fix retry, error: %d", err);
     return err;
+  }
+
+  k_work_init(&agnss_work, agnss_work_handler);
+
+  /* Pre-inject with an empty request frame so all data types are injected */
+  struct nrf_modem_gnss_agnss_data_frame pre_req = {
+    .data_flags = NRF_MODEM_GNSS_AGNSS_GPS_UTC_REQUEST
+                | NRF_MODEM_GNSS_AGNSS_KLOBUCHAR_REQUEST
+                | NRF_MODEM_GNSS_AGNSS_NEQUICK_REQUEST
+                | NRF_MODEM_GNSS_AGNSS_GPS_SYS_TIME_AND_SV_TOW_REQUEST
+                | NRF_MODEM_GNSS_AGNSS_POSITION_REQUEST
+                | NRF_MODEM_GNSS_AGNSS_INTEGRITY_REQUEST,
+    .system_count = 1,
+    .system = {{
+        .system_id   = NRF_MODEM_GNSS_SYSTEM_GPS,
+        .sv_mask_ephe = 0xFFFFFFFF,  /* request all 32 GPS SVs */
+        .sv_mask_alm  = 0xFFFFFFFF,
+    }},
+  };
+  LOG_INF("Pre-injecting fake A-GNSS fake data");
+  err = agps_fake_inject_all(&pre_req);
+  if (err) {
+    LOG_WRN("A-GNSS pre-injection failed: %d (continuing anyway)", err);
   }
 
   LOG_INF("Starting GNSS");

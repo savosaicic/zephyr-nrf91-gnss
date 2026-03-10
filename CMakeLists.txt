@@ -3,4 +3,5 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
 project(zephyr_nrf91_gnss)
 
-target_sources(app PRIVATE src/main.c)
+target_include_directories(app PRIVATE include)
+target_sources(app PRIVATE src/main.c src/fake_agps_data.c)

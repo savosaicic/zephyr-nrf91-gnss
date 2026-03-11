@@ -205,27 +205,6 @@ static int gnss_init_and_start(void)
 
   k_work_init(&agnss_work, agnss_work_handler);
 
-  /* Pre-inject with an empty request frame so all data types are injected */
-  struct nrf_modem_gnss_agnss_data_frame pre_req = {
-    .data_flags = NRF_MODEM_GNSS_AGNSS_GPS_UTC_REQUEST
-                | NRF_MODEM_GNSS_AGNSS_KLOBUCHAR_REQUEST
-                | NRF_MODEM_GNSS_AGNSS_NEQUICK_REQUEST
-                | NRF_MODEM_GNSS_AGNSS_GPS_SYS_TIME_AND_SV_TOW_REQUEST
-                | NRF_MODEM_GNSS_AGNSS_POSITION_REQUEST
-                | NRF_MODEM_GNSS_AGNSS_INTEGRITY_REQUEST,
-    .system_count = 1,
-    .system = {{
-        .system_id   = NRF_MODEM_GNSS_SYSTEM_GPS,
-        .sv_mask_ephe = 0xFFFFFFFF,  /* request all 32 GPS SVs */
-        .sv_mask_alm  = 0xFFFFFFFF,
-    }},
-  };
-  LOG_INF("Pre-injecting fake A-GNSS fake data");
-  err = agps_fake_inject_all(&pre_req);
-  if (err) {
-    LOG_WRN("A-GNSS pre-injection failed: %d (continuing anyway)", err);
-  }
-
   LOG_INF("Starting GNSS");
   err = nrf_modem_gnss_start();
   if (err) {

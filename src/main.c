@@ -14,9 +14,12 @@ LOG_MODULE_REGISTER(nrf91_gnss);
 static K_SEM_DEFINE(lte_connected, 0, 1);
 static K_SEM_DEFINE(time_synced, 0, 1);
 static K_SEM_DEFINE(agnss_req_ready, 0, 1);
+static K_SEM_DEFINE(cell_meas_ready, 0, 1);
 
 static struct nrf_modem_gnss_agnss_data_frame gnss_agnss_req;
 static struct nrf_modem_gnss_pvt_data_frame   pvt_data;
+
+static struct lte_lc_cells_info cell_info = {0};
 
 static int64_t gnss_start_time;
 static bool    first_fix = false;
@@ -127,6 +130,13 @@ static void lte_handler(const struct lte_lc_evt *const evt)
   case LTE_LC_EVT_EDRX_UPDATE:
     LOG_INF("eDRX parameter update: eDRX: %.2f s, PTW: %.2f s",
             (double)evt->edrx_cfg.edrx, (double)evt->edrx_cfg.ptw);
+    break;
+
+  case LTE_LC_EVT_NEIGHBOR_CELL_MEAS:
+    if (evt->cells_info.current_cell.id != LTE_LC_CELL_EUTRAN_ID_INVALID) {
+      memcpy(&cell_info, &evt->cells_info, sizeof(cell_info));
+    }
+    k_sem_give(&cell_meas_ready);
     break;
 
   default:
@@ -250,7 +260,27 @@ static int agnss_request_and_inject(void)
     .buf_sz = sizeof(agnss_data_buf),
   };
 
-  /* TODO: Attach cell info for better satellite filtering */
+  /* Attach cell info for better satellite filtering */
+  err = lte_lc_neighbor_cell_measurement(NULL);
+  if (err) {
+    LOG_WRN(
+      "Cell measurement trigger failed: %d, proceeding without location hint",
+      err);
+  }
+  err = k_sem_take(&cell_meas_ready, K_SECONDS(10));
+  if (err) {
+    LOG_WRN("Cell measurement timed out, proceeding without location hint");
+  } else if (cell_info.current_cell.id == LTE_LC_CELL_EUTRAN_ID_INVALID) {
+    LOG_WRN("Cell measurement returned invalid cell ID, proceeding without "
+            "location hint");
+  } else {
+    LOG_INF("Cell info acquired");
+  }
+
+  bool has_cell_info =
+    (err == 0 && cell_info.current_cell.id != LTE_LC_CELL_EUTRAN_ID_INVALID);
+
+  agnss_req.net_info = has_cell_info ? &cell_info : NULL;
 
   LOG_INF("Requesting A-GNSS data from nRF Cloud via REST...");
   err = nrf_cloud_rest_agnss_data_get(&rest_ctx, &agnss_req, &agnss_result);
